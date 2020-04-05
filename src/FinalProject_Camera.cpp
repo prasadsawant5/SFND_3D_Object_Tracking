@@ -76,6 +76,20 @@ int main(int argc, const char *argv[])
 
     /* MAIN LOOP OVER ALL IMAGES */
 
+    dataBuffer.reserve(dataBufferSize);
+
+    //enum used for detector type
+    enum DetectorType
+    {
+        FAST = 0,
+        BRISK,
+        ORB,
+        AKAZE,
+        SIFT
+    };
+
+    int keyPointCounter = 0;
+    int matchedKeypoints = 0;
     for (size_t imgIndex = 0; imgIndex <= imgEndIndex - imgStartIndex; imgIndex+=imgStepWidth)
     {
         /* LOAD IMAGE INTO BUFFER */
@@ -91,7 +105,24 @@ int main(int argc, const char *argv[])
         // push image into data frame buffer
         DataFrame frame;
         frame.cameraImg = img;
-        dataBuffer.push_back(frame);
+
+        if (dataBuffer.size() < dataBufferSize)
+        {
+            dataBuffer.push_back(frame);
+        }
+        else
+        {
+            for (size_t i = 0; i < dataBuffer.size(); i++)
+            {
+                if (i == dataBuffer.size() - 1)
+                {
+                    dataBuffer[i] = frame;
+                    continue;
+                }
+
+                dataBuffer[i] = dataBuffer[i + 1];
+            }
+        }
 
         cout << "#1 : LOAD IMAGE INTO BUFFER done" << endl;
 
@@ -140,7 +171,7 @@ int main(int argc, const char *argv[])
         
         
         // REMOVE THIS LINE BEFORE PROCEEDING WITH THE FINAL PROJECT
-        continue; // skips directly to the next image without processing what comes beneath
+        // continue; // skips directly to the next image without processing what comes beneath
 
         /* DETECT IMAGE KEYPOINTS */
 
@@ -156,10 +187,36 @@ int main(int argc, const char *argv[])
         {
             detKeypointsShiTomasi(keypoints, imgGray, false);
         }
+        else if (detectorType.compare("HARRIS") == 0)
+        {
+            detKeypointsHarris(keypoints, imgGray, false);
+        }
+        else if (detectorType.compare("FAST") == 0)
+        {
+            detKeypointsModern(keypoints, imgGray, (int) FAST, false);
+        }
+        else if (detectorType.compare("BRISK") == 0)
+        {
+            detKeypointsModern(keypoints, imgGray, (int) BRISK, false);
+        }
+        else if (detectorType.compare("ORB") == 0)
+        {
+            detKeypointsModern(keypoints, imgGray, (int) ORB, false);
+        }
+        else if (detectorType.compare("AKAZE") == 0)
+        {
+            detKeypointsModern(keypoints, imgGray, (int) AKAZE, false);
+        }
         else
         {
-            //...
+            // SIFT
+            detKeypointsModern(keypoints, imgGray, (int) SIFT, false);
+
         }
+        
+        keyPointCounter += keypoints.size();
+        
+        //// EOF STUDENT ASSIGNMENT
 
         // optional : limit number of keypoints (helpful for debugging and learning)
         bool bLimitKpts = false;
@@ -290,8 +347,11 @@ int main(int argc, const char *argv[])
             } // eof loop over all BB matches            
 
         }
+    }
 
-    } // eof loop over all images
+    cout << endl;
+    cout << "Total keypoints detected: " << keyPointCounter << endl;
+    cout << "Total keypoints matched: " << matchedKeypoints << endl;
 
     return 0;
 }

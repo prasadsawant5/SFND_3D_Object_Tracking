@@ -12,7 +12,7 @@ using namespace std;
 
 
 // Create groups of Lidar points whose projection into the camera falls into the same bounding box
-void clusterLidarWithROI(std::vector<BoundingBox> &boundingBoxes, std::vector<LidarPoint> &lidarPoints, float shrinkFactor, cv::Mat &P_rect_xx, cv::Mat &R_rect_xx, cv::Mat &RT)
+void clusterLidarWithROI(vector<BoundingBox> &boundingBoxes, std::vector<LidarPoint> &lidarPoints, float shrinkFactor, cv::Mat &P_rect_xx, cv::Mat &R_rect_xx, cv::Mat &RT)
 {
     // loop over all Lidar points and associate them to a 2D bounding box
     cv::Mat X(4, 1, cv::DataType<double>::type);
@@ -133,7 +133,43 @@ void show3DObjects(std::vector<BoundingBox> &boundingBoxes, cv::Size worldSize, 
 // associate a given bounding box with the keypoints it contains
 void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, std::vector<cv::DMatch> &kptMatches)
 {
-    // ...
+    for(const auto& match : kptMatches) {
+        const auto &currKeyPoint = kptsCurr[match.trainIdx].pt;
+        if (boundingBox.roi.contains(currKeyPoint)) {
+            boundingBox.kptMatches.emplace_back(match);
+        }
+    }
+
+    double sum = 0;
+    cout << "Distance of Matches:" << std::endl;
+    // Remove outlier matches based on the euclidean distance between them in relation to all the matches in the bounding box.
+    for (const auto& it : boundingBox.kptMatches) 
+    {
+        cv::KeyPoint kpCurr = kptsCurr.at(it.trainIdx);
+        cv::KeyPoint kpPrev = kptsPrev.at(it.queryIdx);
+        double dist = cv::norm(kpCurr.pt - kpPrev.pt);
+        sum += dist;
+
+        cout << dist << " ";
+    }
+    cout << std::endl;
+    double mean = sum / boundingBox.kptMatches.size();
+
+    constexpr double ratio = 1.5;
+    for (auto it = boundingBox.kptMatches.begin(); it < boundingBox.kptMatches.end();) {
+        cv::KeyPoint kpCurr = kptsCurr.at(it->trainIdx);
+        cv::KeyPoint kpPrev = kptsPrev.at(it->queryIdx);
+        double dist = cv::norm(kpCurr.pt - kpPrev.pt);
+
+        if (dist >= mean * ratio) 
+        {
+            boundingBox.kptMatches.erase(it);
+        }
+        else 
+        {
+            it++;
+        }
+    }
 }
 
 
@@ -141,18 +177,228 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
 void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPoint> &kptsCurr, 
                       std::vector<cv::DMatch> kptMatches, double frameRate, double &TTC, cv::Mat *visImg)
 {
-    // ...
+    // compute distance ratios between all matched keypoints
+    vector<double> distRatios; // stores the distance ratios for all keypoints between curr. and prev. frame
+    for (auto it1 = kptMatches.begin(); it1 != kptMatches.end() - 1; it1++) 
+    {
+
+        // get current keypoint and its matched partner in the prev. frame
+        cv::KeyPoint kpOuterCurr = kptsCurr.at(it1->trainIdx);
+        cv::KeyPoint kpOuterPrev = kptsPrev.at(it1->queryIdx);
+
+        for (auto it2 = kptMatches.begin() + 1; it2 != kptMatches.end(); it2++) 
+        {
+
+            double minDist = 100.0; // min. required distance
+
+            // get next keypoint and its matched partner in the prev. frame
+            cv::KeyPoint kpInnerCurr = kptsCurr.at(it2->trainIdx);
+            cv::KeyPoint kpInnerPrev = kptsPrev.at(it2->queryIdx);
+
+            // compute distances and distance ratios
+            double distCurr = cv::norm(kpOuterCurr.pt - kpInnerCurr.pt);
+            double distPrev = cv::norm(kpOuterPrev.pt - kpInnerPrev.pt);
+
+            if (distPrev > numeric_limits<double>::epsilon() && distCurr >= minDist) 
+            {
+                // avoid division by zero
+                double distRatio = distCurr / distPrev;
+                distRatios.push_back(distRatio);
+            }
+        }
+    }
+
+    
+    if (distRatios.empty()) 
+    {
+        TTC = NAN;
+        return;
+    }
+
+    sort(distRatios.begin(), distRatios.end());
+
+    cout << "Distance Ratios:" << endl;
+    for (const auto& dist : distRatios) 
+    {
+        cout << dist << " ";
+    }
+    cout << endl;
+
+
+    long medIndex = floor(distRatios.size() / 2.0);
+    double medDistRatio = distRatios.size() % 2 == 0 ? (distRatios[medIndex - 1] + distRatios[medIndex]) / 2.0 : distRatios[medIndex];
+
+    cout << "medDistRatio = " << medDistRatio << endl;
+
+    double dT = 1 / frameRate;
+    TTC = -dT / (1 - medDistRatio);
 }
 
 
 void computeTTCLidar(std::vector<LidarPoint> &lidarPointsPrev,
                      std::vector<LidarPoint> &lidarPointsCurr, double frameRate, double &TTC)
 {
-    // ...
+    double dT = 1 / frameRate;
+    constexpr double laneWidth = 4.0;
+    constexpr float clusterTolerance = 0.1;
+
+    // find closest distance to LiDAR points within ego lane
+    double minXPrev = 1e9, minXCurr = 1e9;
+
+    cout << "Process previous frame..." << endl;
+    vector<LidarPoint> lidarPointsPrevClustered = removeLidarOutlier(lidarPointsPrev, clusterTolerance);
+
+    cout << "Process current frame..." << endl;
+    vector<LidarPoint> lidarPointsCurrClustered = removeLidarOutlier(lidarPointsCurr, clusterTolerance);
+
+
+    for (const auto & it : lidarPointsPrevClustered) 
+    {
+        if (abs(it.y) <= laneWidth / 2.0) 
+        {
+            minXPrev = it.x < minXPrev ? it.x : minXPrev;
+        }
+    }
+
+    for (const auto & it : lidarPointsCurrClustered) 
+    {
+        if (abs(it.y) <= laneWidth / 2.0) 
+        {
+            minXCurr = it.x < minXCurr ? it.x : minXCurr;
+        }
+    }
+
+    cout << "Prev min X = " << minXPrev << endl;
+    cout << "Curr min X = " << minXCurr << endl;
+
+    TTC = minXCurr * dT / (minXPrev - minXCurr);
+}
+
+
+template<typename KeyType, typename ValueType>
+std::pair<KeyType, ValueType> get_max(const std::map<KeyType, ValueType>& x) 
+{
+    using pairtype = std::pair<KeyType, ValueType>;
+    return *std::max_element(x.begin(), x.end(), [] (const pairtype & p1, const pairtype & p2)
+    {
+        return p1.second < p2.second;
+    });
 }
 
 
 void matchBoundingBoxes(std::vector<cv::DMatch> &matches, std::map<int, int> &bbBestMatches, DataFrame &prevFrame, DataFrame &currFrame)
 {
-    // ...
+    for (const auto& prevBox : prevFrame.boundingBoxes) 
+    {
+        map<int, int> m;
+        for (const auto& currBox : currFrame.boundingBoxes) 
+        {
+            for (const auto &match : matches) 
+            {
+                const auto &prevKeyPoint = prevFrame.keypoints[match.queryIdx].pt;
+                if (prevBox.roi.contains(prevKeyPoint)) 
+                {
+                    const auto &currKeyPoint = currFrame.keypoints[match.trainIdx].pt;
+                    if (currBox.roi.contains(currKeyPoint)) 
+                    {
+                        if(0 == m.count(currBox.boxID)) 
+                        {
+                            m[currBox.boxID] = 1;
+                        }
+                        else 
+                        {
+                            m[currBox.boxID]++;
+                        }
+                    }
+                }
+            }
+        }
+
+        auto max=get_max(m);
+
+        bbBestMatches[prevBox.boxID] = max.first;
+        cout << "ID Matching: " << prevBox.boxID << "=>" << max.first << endl;
+    }
+}
+
+
+std::vector<LidarPoint> removeLidarOutlier(const std::vector<LidarPoint> &lidarPoints, float clusterTolerance) 
+{
+    auto treePrev = make_shared<KdTree>();
+    vector<vector<float>> points;
+    for (int i=0; i< lidarPoints.size(); i++) 
+    {
+        vector<float> point({
+            static_cast<float>(lidarPoints[i].x),               
+            static_cast<float>(lidarPoints[i].y),
+            static_cast<float>(lidarPoints[i].z)
+        });
+
+        points.push_back(point);
+        treePrev->insert(points[i], i);
+    }
+    vector<vector<int>> cluster_indices = euclideanCluster(points, treePrev, clusterTolerance);
+
+    vector<LidarPoint> maxLidarPointsCluster;
+    for (const auto& get_indices : cluster_indices) 
+    {
+        vector<LidarPoint> temp;
+        for (const auto index : get_indices) 
+        {
+            temp.push_back(lidarPoints[index]);
+        }
+
+        cout << "Cluster size = " << temp.size() << std::endl;
+
+        if (temp.size() > maxLidarPointsCluster.size()) 
+        {
+            maxLidarPointsCluster = std::move(temp);
+        }
+    }
+
+    cout << "Max cluster size = " << maxLidarPointsCluster.size() << std::endl;
+    return maxLidarPointsCluster;
+}
+
+
+void clusterHelper(int index, const std::vector<std::vector<float>>& points, std::vector<int>& cluster, std::vector<bool>& processed,
+        const std::shared_ptr<KdTree>& tree, float distanceTol) {
+    processed[index] = true;
+    cluster.push_back(index);
+
+    vector<int> nearest = tree->search(points[index], distanceTol);
+
+    for (int id : nearest) 
+    {
+        if (!processed[id]) 
+        {
+            clusterHelper(id, points, cluster, processed, tree, distanceTol);
+        }
+    }
+}
+
+
+std::vector<std::vector<int>> euclideanCluster(const std::vector<std::vector<float>>& points,
+        const std::shared_ptr<KdTree>& tree, float distanceTol) 
+{
+
+    vector<vector<int>> clusters;
+    vector<bool> processed(points.size(), false);
+
+    int i = 0;
+    while (i < points.size()) 
+    {
+        if (processed[i]) 
+        {
+            i++;
+            continue;
+        }
+
+        vector<int> cluster;
+        clusterHelper(i, points, cluster, processed, tree, distanceTol);
+        clusters.push_back(cluster);
+        i++;
+    }
+
+    return clusters;
 }
