@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <unistd.h>
 
 #include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
@@ -22,6 +23,34 @@ void detectObjects(cv::Mat& img, std::vector<BoundingBox>& bBoxes, float confThr
     ifstream ifs(classesFile.c_str());
     string line;
     while (getline(ifs, line)) classes.push_back(line);
+
+    char buf[2048];
+
+    // getcwd(buf, sizeof(buf));
+
+    cout << get_current_dir_name() << endl;
+
+    ifstream cfg, weights;
+    cfg.open(modelConfiguration);
+    weights.open(modelWeights);
+
+    if (cfg)
+    {
+
+    }
+    else
+    {
+        cout << modelConfiguration << " does not exists" << endl;
+    }
+
+    if (weights)
+    {
+
+    }
+    else
+    {
+        cout << modelWeights << " does not exists" << endl;
+    }
     
     // load neural network
     cv::dnn::Net net = cv::dnn::readNetFromDarknet(modelConfiguration, modelWeights);
