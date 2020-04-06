@@ -141,7 +141,6 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
     }
 
     double sum = 0;
-    cout << "Distance of Matches:" << std::endl;
     // Remove outlier matches based on the euclidean distance between them in relation to all the matches in the bounding box.
     for (const auto& it : boundingBox.kptMatches) 
     {
@@ -149,8 +148,6 @@ void clusterKptMatchesWithROI(BoundingBox &boundingBox, std::vector<cv::KeyPoint
         cv::KeyPoint kpPrev = kptsPrev.at(it.queryIdx);
         double dist = cv::norm(kpCurr.pt - kpPrev.pt);
         sum += dist;
-
-        cout << dist << " ";
     }
     cout << std::endl;
     double mean = sum / boundingBox.kptMatches.size();
@@ -216,13 +213,6 @@ void computeTTCCamera(std::vector<cv::KeyPoint> &kptsPrev, std::vector<cv::KeyPo
     }
 
     sort(distRatios.begin(), distRatios.end());
-
-    cout << "Distance Ratios:" << endl;
-    for (const auto& dist : distRatios) 
-    {
-        cout << dist << " ";
-    }
-    cout << endl;
 
 
     long medIndex = floor(distRatios.size() / 2.0);
